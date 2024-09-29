@@ -75,6 +75,7 @@ BalloonTip::BalloonTip(PrivateTag, const QString& title, QString message, QWidge
                                .arg(window_color.rgba(), 0, 16)
                                .arg(text_color.rgba(), 0, 16);
   setStyleSheet(style_sheet);
+  setAttribute(Qt::WidgetAttribute::WA_TranslucentBackground);
 
   // Replace text in our our message if specific "tags" are used
   message.replace(QStringLiteral("<dolphin_emphasis>"),
@@ -205,6 +206,7 @@ void BalloonTip::UpdateBoundsAndRedraw(const QPoint& target_arrow_tip_position,
   // Using Qt::FlatCap instead fixes the issue.
 
   m_pixmap = QPixmap(size_hint);
+  m_pixmap.fill(Qt::transparent);
 
   QPen border_pen(m_border_color, border_full_width);
   border_pen.setCapStyle(Qt::FlatCap);
