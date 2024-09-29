@@ -64,7 +64,7 @@ void BalloonTip::HideBalloon()
 }
 
 BalloonTip::BalloonTip(PrivateTag, const QString& title, QString message, QWidget* const parent)
-    : QWidget(nullptr, Qt::ToolTip)
+    : QWidget(parent, Qt::ToolTip)
 {
   QColor window_color;
   QColor text_color;
