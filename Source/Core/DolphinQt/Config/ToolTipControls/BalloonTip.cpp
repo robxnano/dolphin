@@ -319,10 +319,17 @@ void BalloonTip::UpdateBoundsAndRedraw(const QPoint& target_arrow_tip_position,
       target_arrow_tip_position.x() - static_cast<int>(arrow_tip_x);
   const int rightmost_valid_balloontip_global_x =
       screen_rect.left() + screen_rect.width() - size_hint.width();
-  // If the balloon would extend off the screen, push it left or right until it's not
-  const int actual_balloontip_global_x =
-      std::max(screen_rect.left(),
-               std::min(rightmost_valid_balloontip_global_x, target_balloontip_global_x));
+
+  int actual_balloontip_global_x = target_balloontip_global_x;
+  // On Wayland, window coordinates are relative, so calculating the possible tooltip positions
+  // is redundant and puts tooltips in the wrong place
+  if (QGuiApplication::platformName() != QStringLiteral("wayland"))
+  {
+    // If the balloon would extend off the screen, push it left or right until it's not
+    actual_balloontip_global_x =
+        std::max(screen_rect.left(),
+                 std::min(rightmost_valid_balloontip_global_x, target_balloontip_global_x));
+  }
   // The tip pixel should be in the middle of the control, and arrow_tip_exterior_y is at the bottom
   // of that pixel. When arrow_at_bottom is true the arrow is above arrow_tip_exterior_y and so the
   // tip pixel is in the right place, but when it's false the arrow is below arrow_tip_exterior_y
