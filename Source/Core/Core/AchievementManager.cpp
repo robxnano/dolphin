@@ -16,6 +16,7 @@
 #include "Common/Assert.h"
 #include "Common/BitUtils.h"
 #include "Common/CommonPaths.h"
+#include "Common/Config/Config.h"
 #include "Common/FileUtil.h"
 #include "Common/IOFile.h"
 #include "Common/Image.h"
@@ -23,8 +24,13 @@
 #include "Common/ScopeGuard.h"
 #include "Common/Version.h"
 #include "Common/WorkQueueThread.h"
+#include "Core/ActionReplay.h"
 #include "Core/Config/AchievementSettings.h"
+#include "Core/Config/FreeLookSettings.h"
+#include "Core/Config/MainSettings.h"
+#include "Core/ConfigLoaders/GameConfigLoader.h"
 #include "Core/Core.h"
+#include "Core/GeckoCode.h"
 #include "Core/HW/Memmap.h"
 #include "Core/HW/VideoInterface.h"
 #include "Core/PatchEngine.h"
@@ -62,7 +68,8 @@ void AchievementManager::Init()
                              [](const char* message, const rc_client_t* client) {
                                INFO_LOG_FMT(ACHIEVEMENTS, "{}", message);
                              });
-    rc_client_set_hardcore_enabled(m_client, Config::Get(Config::RA_HARDCORE_ENABLED));
+    Config::AddConfigChangedCallback([this] { SetHardcoreMode(); });
+    SetHardcoreMode();
     m_queue.Reset("AchievementManagerQueue", [](const std::function<void()>& func) { func(); });
     m_image_queue.Reset("AchievementManagerImageQueue",
                         [](const std::function<void()>& func) { func(); });
@@ -361,6 +368,12 @@ std::recursive_mutex& AchievementManager::GetLock()
 void AchievementManager::SetHardcoreMode()
 {
   rc_client_set_hardcore_enabled(m_client, Config::Get(Config::RA_HARDCORE_ENABLED));
+  if (Config::Get(Config::RA_HARDCORE_ENABLED))
+  {
+    if (Config::Get(Config::MAIN_EMULATION_SPEED) < 1.0f)
+      Config::SetBaseOrCurrent(Config::MAIN_EMULATION_SPEED, 1.0f);
+    Config::SetBaseOrCurrent(Config::FREE_LOOK_ENABLED, false);
+  }
 }
 
 bool AchievementManager::IsHardcoreModeActive() const
@@ -373,10 +386,11 @@ bool AchievementManager::IsHardcoreModeActive() const
   return rc_client_is_processing_required(m_client);
 }
 
-void AchievementManager::FilterApprovedPatches(std::vector<PatchEngine::Patch>& patches,
-                                               const std::string& game_ini_id) const
+template <typename T>
+void AchievementManager::FilterApprovedIni(std::vector<T>& codes, const std::string& game_id,
+                                           u16 revision) const
 {
-  if (patches.empty())
+  if (codes.empty())
   {
     // There's nothing to verify, so let's save ourselves some work
     return;
@@ -387,46 +401,121 @@ void AchievementManager::FilterApprovedPatches(std::vector<PatchEngine::Patch>& 
   if (!IsHardcoreModeActive())
     return;
 
-  const bool known_id = m_ini_root->contains(game_ini_id);
-
-  auto patch_itr = patches.begin();
-  while (patch_itr != patches.end())
+  // Approved codes list failed to hash
+  if (!m_ini_root->is<picojson::value::object>())
   {
-    INFO_LOG_FMT(ACHIEVEMENTS, "Verifying patch {}", patch_itr->name);
-
-    bool verified = false;
-
-    if (known_id)
-    {
-      auto context = Common::SHA1::CreateContext();
-      context->Update(Common::BitCastToArray<u8>(static_cast<u64>(patch_itr->entries.size())));
-      for (const auto& entry : patch_itr->entries)
-      {
-        context->Update(Common::BitCastToArray<u8>(entry.type));
-        context->Update(Common::BitCastToArray<u8>(entry.address));
-        context->Update(Common::BitCastToArray<u8>(entry.value));
-        context->Update(Common::BitCastToArray<u8>(entry.comparand));
-        context->Update(Common::BitCastToArray<u8>(entry.conditional));
-      }
-      auto digest = context->Finish();
-
-      verified = m_ini_root->get(game_ini_id).contains(Common::SHA1::DigestToString(digest));
-    }
-
-    if (!verified)
-    {
-      patch_itr = patches.erase(patch_itr);
-      OSD::AddMessage(
-          fmt::format("Failed to verify patch {} from file {}.", patch_itr->name, game_ini_id),
-          OSD::Duration::VERY_LONG, OSD::Color::RED);
-      OSD::AddMessage("Disable hardcore mode to enable this patch.", OSD::Duration::VERY_LONG,
-                      OSD::Color::RED);
-    }
-    else
-    {
-      patch_itr++;
-    }
+    codes.clear();
+    return;
   }
+
+  for (auto& code : codes)
+  {
+    if (code.enabled && !CheckApprovedCode(code, game_id, revision))
+      code.enabled = false;
+  }
+}
+
+template <typename T>
+bool AchievementManager::CheckApprovedCode(const T& code, const std::string& game_id,
+                                           u16 revision) const
+{
+  if (!IsHardcoreModeActive())
+    return true;
+
+  // Approved codes list failed to hash
+  if (!m_ini_root->is<picojson::value::object>())
+    return false;
+
+  INFO_LOG_FMT(ACHIEVEMENTS, "Verifying code {}", code.name);
+
+  bool verified = false;
+
+  auto hash = Common::SHA1::DigestToString(GetCodeHash(code));
+
+  for (const std::string& filename : ConfigLoaders::GetGameIniFilenames(game_id, revision))
+  {
+    auto config = filename.substr(0, filename.length() - 4);
+    if (m_ini_root->contains(config) && m_ini_root->get(config).contains(hash))
+      verified = true;
+  }
+
+  if (!verified)
+  {
+    OSD::AddMessage(fmt::format("Failed to verify code {} for game ID {}.", code.name, game_id),
+                    OSD::Duration::VERY_LONG, OSD::Color::RED);
+    OSD::AddMessage("Disable hardcore mode to enable this code.", OSD::Duration::VERY_LONG,
+                    OSD::Color::RED);
+  }
+  return verified;
+}
+
+Common::SHA1::Digest AchievementManager::GetCodeHash(const PatchEngine::Patch& patch) const
+{
+  auto context = Common::SHA1::CreateContext();
+  context->Update(Common::BitCastToArray<u8>(static_cast<u64>(patch.entries.size())));
+  for (const auto& entry : patch.entries)
+  {
+    context->Update(Common::BitCastToArray<u8>(entry.type));
+    context->Update(Common::BitCastToArray<u8>(entry.address));
+    context->Update(Common::BitCastToArray<u8>(entry.value));
+    context->Update(Common::BitCastToArray<u8>(entry.comparand));
+    context->Update(Common::BitCastToArray<u8>(entry.conditional));
+  }
+  return context->Finish();
+}
+
+Common::SHA1::Digest AchievementManager::GetCodeHash(const Gecko::GeckoCode& code) const
+{
+  auto context = Common::SHA1::CreateContext();
+  context->Update(Common::BitCastToArray<u8>(static_cast<u64>(code.codes.size())));
+  for (const auto& entry : code.codes)
+  {
+    context->Update(Common::BitCastToArray<u8>(entry.address));
+    context->Update(Common::BitCastToArray<u8>(entry.data));
+  }
+  return context->Finish();
+}
+
+Common::SHA1::Digest AchievementManager::GetCodeHash(const ActionReplay::ARCode& code) const
+{
+  auto context = Common::SHA1::CreateContext();
+  context->Update(Common::BitCastToArray<u8>(static_cast<u64>(code.ops.size())));
+  for (const auto& entry : code.ops)
+  {
+    context->Update(Common::BitCastToArray<u8>(entry.cmd_addr));
+    context->Update(Common::BitCastToArray<u8>(entry.value));
+  }
+  return context->Finish();
+}
+
+void AchievementManager::FilterApprovedPatches(std::vector<PatchEngine::Patch>& patches,
+                                               const std::string& game_id, u16 revision) const
+{
+  FilterApprovedIni(patches, game_id, revision);
+}
+
+void AchievementManager::FilterApprovedGeckoCodes(std::vector<Gecko::GeckoCode>& codes,
+                                                  const std::string& game_id, u16 revision) const
+{
+  FilterApprovedIni(codes, game_id, revision);
+}
+
+void AchievementManager::FilterApprovedARCodes(std::vector<ActionReplay::ARCode>& codes,
+                                               const std::string& game_id, u16 revision) const
+{
+  FilterApprovedIni(codes, game_id, revision);
+}
+
+bool AchievementManager::CheckApprovedGeckoCode(const Gecko::GeckoCode& code,
+                                                const std::string& game_id, u16 revision) const
+{
+  return CheckApprovedCode(code, game_id, revision);
+}
+
+bool AchievementManager::CheckApprovedARCode(const ActionReplay::ARCode& code,
+                                             const std::string& game_id, u16 revision) const
+{
+  return CheckApprovedCode(code, game_id, revision);
 }
 
 void AchievementManager::SetSpectatorMode()
@@ -749,6 +838,7 @@ void AchievementManager::LoginCallback(int result, const char* error_message, rc
   {
     WARN_LOG_FMT(ACHIEVEMENTS, "Failed to login {} to RetroAchievements server.",
                  Config::Get(Config::RA_USERNAME));
+    AchievementManager::GetInstance().m_update_callback({.failed_login_code = result});
     return;
   }
 
@@ -760,6 +850,7 @@ void AchievementManager::LoginCallback(int result, const char* error_message, rc
   if (!user)
   {
     WARN_LOG_FMT(ACHIEVEMENTS, "Failed to retrieve user information from client.");
+    AchievementManager::GetInstance().m_update_callback({.failed_login_code = RC_INVALID_STATE});
     return;
   }
 
@@ -778,6 +869,7 @@ void AchievementManager::LoginCallback(int result, const char* error_message, rc
       INFO_LOG_FMT(ACHIEVEMENTS, "Attempted to login prior user {}; current user is {}.",
                    user->username, Config::Get(Config::RA_USERNAME));
       rc_client_logout(client);
+      AchievementManager::GetInstance().m_update_callback({.failed_login_code = RC_INVALID_STATE});
       return;
     }
   }
@@ -802,7 +894,7 @@ void AchievementManager::LeaderboardEntriesCallback(int result, const char* erro
                                                     rc_client_leaderboard_entry_list_t* list,
                                                     rc_client_t* client, void* userdata)
 {
-  u32* leaderboard_id = reinterpret_cast<u32*>(userdata);
+  u32* leaderboard_id = static_cast<u32*>(userdata);
   Common::ScopeGuard on_end_scope([&]() { delete leaderboard_id; });
 
   if (result != RC_OK)
@@ -820,7 +912,7 @@ void AchievementManager::LeaderboardEntriesCallback(int result, const char* erro
     map_entry.username.assign(response_entry.user);
     memcpy(map_entry.score.data(), response_entry.display, FORMAT_SIZE);
     map_entry.rank = response_entry.rank;
-    if (ix == list->user_index)
+    if (static_cast<int32_t>(ix) == list->user_index)
       leaderboard.player_index = response_entry.rank;
   }
   AchievementManager::GetInstance().m_update_callback({.leaderboards = {*leaderboard_id}});
@@ -830,6 +922,15 @@ void AchievementManager::LoadGameCallback(int result, const char* error_message,
                                           rc_client_t* client, void* userdata)
 {
   AchievementManager::GetInstance().m_loading_volume.reset(nullptr);
+  if (result == RC_API_FAILURE)
+  {
+    WARN_LOG_FMT(ACHIEVEMENTS, "Load data request rejected for old Dolphin version.");
+    OSD::AddMessage("RetroAchievements no longer supports this version of Dolphin.",
+                    OSD::Duration::VERY_LONG, OSD::Color::RED);
+    OSD::AddMessage("Please update Dolphin to a newer version.", OSD::Duration::VERY_LONG,
+                    OSD::Color::RED);
+    return;
+  }
   if (result != RC_OK)
   {
     WARN_LOG_FMT(ACHIEVEMENTS, "Failed to load data for current game.");
@@ -1053,7 +1154,7 @@ void AchievementManager::HandleGameCompletedEvent(const rc_client_event_t* clien
 
 void AchievementManager::HandleResetEvent(const rc_client_event_t* client_event)
 {
-  INFO_LOG_FMT(ACHIEVEMENTS, "Reset requested by Achievement Mananger");
+  INFO_LOG_FMT(ACHIEVEMENTS, "Reset requested by Achievement Manager");
   Core::Stop(Core::System::GetInstance());
 }
 

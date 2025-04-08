@@ -18,11 +18,13 @@
 
 #include <mutex>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
 #include "Common/CommonTypes.h"
 #include "Common/SPSCQueue.h"
+#include "Common/Timer.h"
 #include "Core/CPUThreadConfigCallback.h"
 
 class PointerWrap;
@@ -58,6 +60,16 @@ struct Event
   u64 fifo_order;
   u64 userdata;
   EventType* type;
+
+  // Sort by time, unless the times are the same, in which case sort by the order added to the queue
+  constexpr auto operator<=>(const Event& other) const
+  {
+    return std::tie(time, fifo_order) <=> std::tie(other.time, other.fifo_order);
+  }
+  constexpr bool operator==(const Event& other) const
+  {
+    return std::tie(time, fifo_order) == std::tie(other.time, other.fifo_order);
+  }
 };
 
 enum class FromThread
@@ -87,6 +99,7 @@ public:
   // doing something evil
   u64 GetTicks() const;
   u64 GetIdleTicks() const;
+  TimePoint GetTargetHostTime(s64 target_cycle);
 
   void RefreshConfig();
 
@@ -144,12 +157,13 @@ public:
   Globals& GetGlobals() { return m_globals; }
 
   // Throttle the CPU to the specified target cycle.
-  // Never used outside of CoreTiming, however it remains public
-  // in order to allow custom throttling implementations to be tested.
   void Throttle(const s64 target_cycle);
 
-  TimePoint GetCPUTimePoint(s64 cyclesLate) const;  // Used by Dolphin Analytics
-  bool GetVISkip() const;                           // Used By VideoInterface
+  // May be used from CPU or GPU thread.
+  void SleepUntil(TimePoint time_point);
+
+  // Used by VideoInterface
+  bool GetVISkip() const;
 
   bool UseSyncOnSkipIdle() const;
 
@@ -163,9 +177,9 @@ private:
   std::unordered_map<std::string, EventType> m_event_types;
 
   // STATE_TO_SAVE
-  // The queue is a min-heap using std::make_heap/push_heap/pop_heap.
+  // The queue is a min-heap using std::ranges::make_heap/push_heap/pop_heap.
   // We don't use std::priority_queue because we need to be able to serialize, unserialize and
-  // erase arbitrary events (RemoveEvent()) regardless of the queue order. These aren't accomodated
+  // erase arbitrary events (RemoveEvent()) regardless of the queue order. These aren't accommodated
   // by the standard adaptor class.
   std::vector<Event> m_event_queue;
   u64 m_event_fifo_id = 0;
@@ -191,7 +205,6 @@ private:
   s64 m_throttle_last_cycle = 0;
   TimePoint m_throttle_deadline = Clock::now();
   s64 m_throttle_clock_per_sec = 0;
-  s64 m_throttle_min_clock_per_sleep = 0;
   bool m_throttle_disable_vi_int = false;
 
   DT m_max_fallback = {};
@@ -202,6 +215,10 @@ private:
 
   int DowncountToCycles(int downcount) const;
   int CyclesToDowncount(int cycles) const;
+
+  std::atomic_bool m_use_precision_timer = false;
+  Common::PrecisionTimer m_precision_cpu_timer;
+  Common::PrecisionTimer m_precision_gpu_timer;
 };
 
 }  // namespace CoreTiming

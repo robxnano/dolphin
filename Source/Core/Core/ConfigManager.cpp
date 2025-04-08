@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <climits>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -43,8 +44,11 @@
 #include "Core/HLE/HLE.h"
 #include "Core/HW/DVD/DVDInterface.h"
 #include "Core/HW/EXI/EXI_Device.h"
+#include "Core/HW/GCKeyboard.h"
+#include "Core/HW/GCPad.h"
 #include "Core/HW/SI/SI.h"
 #include "Core/HW/SI/SI_Device.h"
+#include "Core/HW/Wiimote.h"
 #include "Core/Host.h"
 #include "Core/IOS/ES/ES.h"
 #include "Core/IOS/ES/Formats.h"
@@ -98,14 +102,52 @@ void SConfig::LoadSettings()
   Config::Load();
 }
 
+const std::string SConfig::GetGameID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_game_id;
+}
+
+const std::string SConfig::GetGameTDBID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_gametdb_id;
+}
+
+const std::string SConfig::GetTitleName() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_name;
+}
+
+const std::string SConfig::GetTitleDescription() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_description;
+}
+
+u64 SConfig::GetTitleID() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_title_id;
+}
+
+u16 SConfig::GetRevision() const
+{
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
+  return m_revision;
+}
+
 void SConfig::ResetRunningGameMetadata()
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   SetRunningGameMetadata("00000000", "", 0, 0, DiscIO::Region::Unknown);
 }
 
 void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
                                      const DiscIO::Partition& partition)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   if (partition == volume.GetGamePartition())
   {
     SetRunningGameMetadata(volume.GetGameID(), volume.GetGameTDBID(),
@@ -114,7 +156,7 @@ void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
   }
   else
   {
-    SetRunningGameMetadata(volume.GetGameID(partition), volume.GetGameTDBID(),
+    SetRunningGameMetadata(volume.GetGameID(partition), volume.GetGameTDBID(partition),
                            volume.GetTitleID(partition).value_or(0),
                            volume.GetRevision(partition).value_or(0), volume.GetRegion());
   }
@@ -122,6 +164,7 @@ void SConfig::SetRunningGameMetadata(const DiscIO::Volume& volume,
 
 void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd, DiscIO::Platform platform)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   const u64 tmd_title_id = tmd.GetTitleId();
 
   // If we're launching a disc game, we want to read the revision from
@@ -139,12 +182,14 @@ void SConfig::SetRunningGameMetadata(const IOS::ES::TMDReader& tmd, DiscIO::Plat
 
 void SConfig::SetRunningGameMetadata(const std::string& game_id)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   SetRunningGameMetadata(game_id, "", 0, 0, DiscIO::Region::Unknown);
 }
 
 void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::string& gametdb_id,
                                      u64 title_id, u16 revision, DiscIO::Region region)
 {
+  std::lock_guard<std::recursive_mutex> lock(m_metadata_lock);
   const bool was_changed = m_game_id != game_id || m_gametdb_id != gametdb_id ||
                            m_title_id != title_id || m_revision != revision;
   m_game_id = game_id;
@@ -197,7 +242,20 @@ void SConfig::SetRunningGameMetadata(const std::string& game_id, const std::stri
     DolphinAnalytics::Instance().ReportGameStart();
 }
 
-void SConfig::OnNewTitleLoad(const Core::CPUThreadGuard& guard)
+void SConfig::OnESTitleChanged()
+{
+  auto& system = Core::System::GetInstance();
+  Pad::LoadConfig();
+  Keyboard::LoadConfig();
+  if (system.IsWii() && !Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED))
+  {
+    Wiimote::LoadConfig();
+  }
+
+  ReloadTextures(system);
+}
+
+void SConfig::OnTitleDirectlyBooted(const Core::CPUThreadGuard& guard)
 {
   auto& system = guard.GetSystem();
   if (!Core::IsRunningOrStarting(system))
@@ -211,9 +269,27 @@ void SConfig::OnNewTitleLoad(const Core::CPUThreadGuard& guard)
   }
   CBoot::LoadMapFromFilename(guard, ppc_symbol_db);
   HLE::Reload(system);
-  PatchEngine::Reload();
-  HiresTexture::Update();
+
+  PatchEngine::Reload(system);
   WC24PatchEngine::Reload();
+
+  // Note: Wii is handled by ES title change
+  if (!system.IsWii())
+  {
+    ReloadTextures(system);
+  }
+}
+
+void SConfig::ReloadTextures(Core::System& system)
+{
+  Pad::GenerateDynamicInputTextures();
+  Keyboard::GenerateDynamicInputTextures();
+  if (system.IsWii() && !Config::Get(Config::MAIN_BLUETOOTH_PASSTHROUGH_ENABLED))
+  {
+    Wiimote::GenerateDynamicInputTextures();
+  }
+
+  HiresTexture::Update();
 }
 
 void SConfig::LoadDefaults()
@@ -265,7 +341,7 @@ struct SetGameMetadata
     std::string executable_path = executable.path;
     constexpr char BACKSLASH = '\\';
     constexpr char FORWARDSLASH = '/';
-    std::replace(executable_path.begin(), executable_path.end(), BACKSLASH, FORWARDSLASH);
+    std::ranges::replace(executable_path, BACKSLASH, FORWARDSLASH);
     config->SetRunningGameMetadata(SConfig::MakeGameID(PathToFileName(executable_path)));
 
     Host_TitleChanged();

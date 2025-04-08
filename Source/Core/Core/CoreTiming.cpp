@@ -18,7 +18,6 @@
 
 #include "Core/AchievementManager.h"
 #include "Core/CPUThreadConfigCallback.h"
-#include "Core/Config/AchievementSettings.h"
 #include "Core/Config/MainSettings.h"
 #include "Core/Core.h"
 #include "Core/PowerPC/PowerPC.h"
@@ -32,16 +31,6 @@
 
 namespace CoreTiming
 {
-// Sort by time, unless the times are the same, in which case sort by the order added to the queue
-static bool operator>(const Event& left, const Event& right)
-{
-  return std::tie(left.time, left.fifo_order) > std::tie(right.time, right.fifo_order);
-}
-static bool operator<(const Event& left, const Event& right)
-{
-  return std::tie(left.time, left.fifo_order) < std::tie(right.time, right.fifo_order);
-}
-
 static constexpr int MAX_SLICE_LENGTH = 20000;
 
 static void EmptyTimedCallback(Core::System& system, u64 userdata, s64 cyclesLate)
@@ -103,7 +92,7 @@ void CoreTimingManager::Init()
   m_globals.global_timer = 0;
   m_idled_cycles = 0;
 
-  // The time between CoreTiming being intialized and the first call to Advance() is considered
+  // The time between CoreTiming being initialized and the first call to Advance() is considered
   // the slice boundary between slice -1 and slice 0. Dispatcher loops must call Advance() before
   // executing the first PPC cycle of each slice to prepare the slice length and downcount for
   // that slice.
@@ -148,6 +137,8 @@ void CoreTimingManager::RefreshConfig()
   }
 
   m_emulation_speed = Config::Get(Config::MAIN_EMULATION_SPEED);
+
+  m_use_precision_timer = Config::Get(Config::MAIN_PRECISION_FRAME_TIMING);
 }
 
 void CoreTimingManager::DoState(PointerWrap& p)
@@ -205,7 +196,7 @@ void CoreTimingManager::DoState(PointerWrap& p)
     // When loading from a save state, we must assume the Event order is random and meaningless.
     // The exact layout of the heap in memory is implementation defined, therefore it is platform
     // and library version specific.
-    std::make_heap(m_event_queue.begin(), m_event_queue.end(), std::greater<Event>());
+    std::ranges::make_heap(m_event_queue, std::ranges::greater{});
 
     // The stave state has changed the time, so our previous Throttle targets are invalid.
     // Especially when global_time goes down; So we create a fake throttle update.
@@ -263,7 +254,7 @@ void CoreTimingManager::ScheduleEvent(s64 cycles_into_future, EventType* event_t
       ForceExceptionCheck(cycles_into_future);
 
     m_event_queue.emplace_back(Event{timeout, m_event_fifo_id++, userdata, event_type});
-    std::push_heap(m_event_queue.begin(), m_event_queue.end(), std::greater<Event>());
+    std::ranges::push_heap(m_event_queue, std::ranges::greater{});
   }
   else
   {
@@ -288,7 +279,7 @@ void CoreTimingManager::RemoveEvent(EventType* event_type)
   // Removing random items breaks the invariant so we have to re-establish it.
   if (erased != 0)
   {
-    std::make_heap(m_event_queue.begin(), m_event_queue.end(), std::greater<Event>());
+    std::ranges::make_heap(m_event_queue, std::ranges::greater{});
   }
 }
 
@@ -317,7 +308,7 @@ void CoreTimingManager::MoveEvents()
   {
     ev.fifo_order = m_event_fifo_id++;
     m_event_queue.emplace_back(std::move(ev));
-    std::push_heap(m_event_queue.begin(), m_event_queue.end(), std::greater<Event>());
+    std::ranges::push_heap(m_event_queue, std::ranges::greater{});
   }
 }
 
@@ -341,10 +332,8 @@ void CoreTimingManager::Advance()
   while (!m_event_queue.empty() && m_event_queue.front().time <= m_globals.global_timer)
   {
     Event evt = std::move(m_event_queue.front());
-    std::pop_heap(m_event_queue.begin(), m_event_queue.end(), std::greater<Event>());
+    std::ranges::pop_heap(m_event_queue, std::ranges::greater{});
     m_event_queue.pop_back();
-
-    Throttle(evt.time);
     evt.type->callback(m_system, evt.userdata, m_globals.global_timer - evt.time);
   }
 
@@ -366,15 +355,52 @@ void CoreTimingManager::Advance()
   power_pc.CheckExternalExceptions();
 }
 
+TimePoint CoreTimingManager::GetTargetHostTime(s64 target_cycle)
+{
+  const double speed = Core::GetIsThrottlerTempDisabled() ? 0.0 : m_emulation_speed;
+
+  if (speed > 0)
+  {
+    const s64 cycles = target_cycle - m_throttle_last_cycle;
+    return m_throttle_deadline + std::chrono::duration_cast<DT>(
+                                     DT_s(cycles) / (m_emulation_speed * m_throttle_clock_per_sec));
+  }
+  else
+  {
+    return Clock::now();
+  }
+}
+
+void CoreTimingManager::SleepUntil(TimePoint time_point)
+{
+  const bool use_precision_timer = m_use_precision_timer.load(std::memory_order_relaxed);
+
+  if (Core::IsCPUThread())
+  {
+    const TimePoint time = Clock::now();
+
+    if (use_precision_timer)
+      m_precision_cpu_timer.SleepUntil(time_point);
+    else
+      std::this_thread::sleep_until(time_point);
+
+    // Count amount of time sleeping for analytics
+    const TimePoint time_after_sleep = Clock::now();
+    g_perf_metrics.CountThrottleSleep(time_after_sleep - time);
+  }
+  else
+  {
+    if (use_precision_timer)
+      m_precision_gpu_timer.SleepUntil(time_point);
+    else
+      std::this_thread::sleep_until(time_point);
+  }
+}
+
 void CoreTimingManager::Throttle(const s64 target_cycle)
 {
   // Based on number of cycles and emulation speed, increase the target deadline
   const s64 cycles = target_cycle - m_throttle_last_cycle;
-
-  // Prevent any throttling code if the amount of time passed is < ~0.122ms
-  if (cycles < m_throttle_min_clock_per_sleep)
-    return;
-
   m_throttle_last_cycle = target_cycle;
 
   const double speed = Core::GetIsThrottlerTempDisabled() ? 0.0 : m_emulation_speed;
@@ -404,27 +430,13 @@ void CoreTimingManager::Throttle(const s64 target_cycle)
   // It doesn't matter what amount of lag we skip VI at, as long as it's constant.
   m_throttle_disable_vi_int = 0.0 < speed && m_throttle_deadline < vi_deadline;
 
-  // Only sleep if we are behind the deadline
-  if (time < m_throttle_deadline)
-  {
-    std::this_thread::sleep_until(m_throttle_deadline);
-
-    // Count amount of time sleeping for analytics
-    const TimePoint time_after_sleep = Clock::now();
-    g_perf_metrics.CountThrottleSleep(time_after_sleep - time);
-  }
+  SleepUntil(m_throttle_deadline);
 }
 
 void CoreTimingManager::ResetThrottle(s64 cycle)
 {
   m_throttle_last_cycle = cycle;
   m_throttle_deadline = Clock::now();
-}
-
-TimePoint CoreTimingManager::GetCPUTimePoint(s64 cyclesLate) const
-{
-  return TimePoint(std::chrono::duration_cast<DT>(DT_s(m_globals.global_timer - cyclesLate) /
-                                                  m_throttle_clock_per_sec));
 }
 
 bool CoreTimingManager::GetVISkip() const
@@ -440,7 +452,7 @@ bool CoreTimingManager::UseSyncOnSkipIdle() const
 void CoreTimingManager::LogPendingEvents() const
 {
   auto clone = m_event_queue;
-  std::sort(clone.begin(), clone.end());
+  std::ranges::sort(clone);
   for (const Event& ev : clone)
   {
     INFO_LOG_FMT(POWERPC, "PENDING: Now: {} Pending: {} Type: {}", m_globals.global_timer, ev.time,
@@ -451,8 +463,9 @@ void CoreTimingManager::LogPendingEvents() const
 // Should only be called from the CPU thread after the PPC clock has changed
 void CoreTimingManager::AdjustEventQueueTimes(u32 new_ppc_clock, u32 old_ppc_clock)
 {
+  g_perf_metrics.AdjustClockSpeed(m_globals.global_timer, new_ppc_clock, old_ppc_clock);
+
   m_throttle_clock_per_sec = new_ppc_clock;
-  m_throttle_min_clock_per_sleep = new_ppc_clock / 1200;
 
   for (Event& ev : m_event_queue)
   {
@@ -483,7 +496,7 @@ std::string CoreTimingManager::GetScheduledEventsSummary() const
   text.reserve(1000);
 
   auto clone = m_event_queue;
-  std::sort(clone.begin(), clone.end());
+  std::ranges::sort(clone);
   for (const Event& ev : clone)
   {
     text += fmt::format("{} : {} {:016x}\n", *ev.type->name, ev.time, ev.userdata);

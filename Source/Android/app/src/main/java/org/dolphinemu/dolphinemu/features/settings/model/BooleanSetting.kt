@@ -30,7 +30,7 @@ enum class BooleanSetting(
         "OverrideRegionSettings",
         false
     ),
-    MAIN_AUDIO_STRETCH(Settings.FILE_DOLPHIN, Settings.SECTION_INI_CORE, "AudioStretch", false),
+    MAIN_AUDIO_FILL_GAPS(Settings.FILE_DOLPHIN, Settings.SECTION_INI_CORE, "AudioFillGaps", true),
     MAIN_BBA_XLINK_CHAT_OSD(
         Settings.FILE_DOLPHIN,
         Settings.SECTION_INI_CORE,
@@ -651,6 +651,7 @@ enum class BooleanSetting(
     SYSCONF_PROGRESSIVE_SCAN(Settings.FILE_SYSCONF, "IPL", "PGS", true),
     SYSCONF_PAL60(Settings.FILE_SYSCONF, "IPL", "E60", true),
     SYSCONF_WIIMOTE_MOTOR(Settings.FILE_SYSCONF, "BT", "MOT", true),
+    GFX_VSYNC(Settings.FILE_GFX, Settings.SECTION_GFX_HARDWARE, "VSync", false),
     GFX_WIDESCREEN_HACK(Settings.FILE_GFX, Settings.SECTION_GFX_SETTINGS, "wideScreenHack", false),
     GFX_CROP(Settings.FILE_GFX, Settings.SECTION_GFX_SETTINGS, "Crop", false),
     GFX_SHOW_FPS(Settings.FILE_GFX, Settings.SECTION_GFX_SETTINGS, "ShowFPS", false),
@@ -788,7 +789,7 @@ enum class BooleanSetting(
         Settings.FILE_GFX,
         Settings.SECTION_GFX_HACKS,
         "EFBAccessEnable",
-        true
+        false
     ),
     GFX_HACK_EFB_DEFER_INVALIDATION(
         Settings.FILE_GFX,

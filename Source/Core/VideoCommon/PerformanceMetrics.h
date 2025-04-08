@@ -3,8 +3,8 @@
 
 #pragma once
 
-#include <array>
-#include <shared_mutex>
+#include <atomic>
+#include <deque>
 
 #include "Common/CommonTypes.h"
 #include "VideoCommon/PerformanceTracker.h"
@@ -25,21 +25,21 @@ public:
   PerformanceMetrics(PerformanceMetrics&&) = delete;
   PerformanceMetrics& operator=(PerformanceMetrics&&) = delete;
 
-  // Count Functions
   void Reset();
+
   void CountFrame();
   void CountVBlank();
 
+  // Call from CPU thread.
   void CountThrottleSleep(DT sleep);
-  void CountPerformanceMarker(Core::System& system, s64 cyclesLate);
+  void AdjustClockSpeed(s64 ticks, u32 new_ppc_clock, u32 old_ppc_clock);
+  void CountPerformanceMarker(s64 ticks, u32 ticks_per_second);
 
-  // Getter Functions
+  // Getter Functions. May be called from any thread.
   double GetFPS() const;
   double GetVPS() const;
   double GetSpeed() const;
   double GetMaxSpeed() const;
-
-  double GetLastSpeedDenominator() const;
 
   // ImGui Functions
   void DrawImGuiStats(const float backbuffer_scale);
@@ -47,15 +47,20 @@ public:
 private:
   PerformanceTracker m_fps_counter{"render_times.txt"};
   PerformanceTracker m_vps_counter{"vblank_times.txt"};
-  PerformanceTracker m_speed_counter{std::nullopt, 1000000};
 
   double m_graph_max_time = 0.0;
 
-  mutable std::shared_mutex m_time_lock;
+  std::atomic<double> m_speed{};
+  std::atomic<double> m_max_speed{};
 
-  u8 m_time_index = 0;
-  std::array<TimePoint, 256> m_real_times{};
-  std::array<TimePoint, 256> m_cpu_times{};
+  struct PerfSample
+  {
+    TimePoint clock_time;
+    TimePoint work_time;
+    s64 core_ticks;
+  };
+
+  std::deque<PerfSample> m_samples;
   DT m_time_sleeping{};
 };
 

@@ -2,7 +2,6 @@
 <Project>
   <ItemGroup>
     <ClInclude Include="AudioCommon\AudioCommon.h" />
-    <ClInclude Include="AudioCommon\AudioStretcher.h" />
     <ClInclude Include="AudioCommon\CubebStream.h" />
     <ClInclude Include="AudioCommon\CubebUtils.h" />
     <ClInclude Include="AudioCommon\Enums.h" />
@@ -38,6 +37,7 @@
     <ClInclude Include="Common\Config\ConfigInfo.h" />
     <ClInclude Include="Common\Config\Enums.h" />
     <ClInclude Include="Common\Config\Layer.h" />
+    <ClInclude Include="Common\Contains.h" />
     <ClInclude Include="Common\CPUDetect.h" />
     <ClInclude Include="Common\Crypto\AES.h" />
     <ClInclude Include="Common\Crypto\bn.h" />
@@ -117,6 +117,7 @@
     <ClInclude Include="Common\GL\GLX11Window.h" />
     <ClInclude Include="Common\Hash.h" />
     <ClInclude Include="Common\HookableEvent.h" />
+    <ClInclude Include="Common\HostDisassembler.h" />
     <ClInclude Include="Common\HRWrap.h" />
     <ClInclude Include="Common\HttpRequest.h" />
     <ClInclude Include="Common\Image.h" />
@@ -142,6 +143,7 @@
     <ClInclude Include="Common\Network.h" />
     <ClInclude Include="Common\PcapFile.h" />
     <ClInclude Include="Common\Profiler.h" />
+    <ClInclude Include="Common\Projection.h" />
     <ClInclude Include="Common\QoSSession.h" />
     <ClInclude Include="Common\Random.h" />
     <ClInclude Include="Common\Result.h" />
@@ -457,6 +459,7 @@
     <ClInclude Include="Core\SyncIdentifier.h" />
     <ClInclude Include="Core\SysConf.h" />
     <ClInclude Include="Core\System.h" />
+    <ClInclude Include="Core\TimePlayed.h" />
     <ClInclude Include="Core\TitleDatabase.h" />
     <ClInclude Include="Core\WC24PatchEngine.h" />
     <ClInclude Include="Core\WiiRoot.h" />
@@ -549,7 +552,6 @@
     <ClInclude Include="InputCommon\KeyboardStatus.h" />
     <ClInclude Include="UICommon\AutoUpdate.h" />
     <ClInclude Include="UICommon\CommandLineParse.h" />
-    <ClInclude Include="UICommon\Disassembler.h" />
     <ClInclude Include="UICommon\DiscordPresence.h" />
     <ClInclude Include="UICommon\GameFile.h" />
     <ClInclude Include="UICommon\GameFileCache.h" />
@@ -613,14 +615,13 @@
     <ClInclude Include="VideoBackends\Software\Clipper.h" />
     <ClInclude Include="VideoBackends\Software\CopyRegion.h" />
     <ClInclude Include="VideoBackends\Software\EfbCopy.h" />
-    <ClInclude Include="VideoBackends\Software\EfbInterface.h" />
     <ClInclude Include="VideoBackends\Software\NativeVertexFormat.h" />
     <ClInclude Include="VideoBackends\Software\Rasterizer.h" />
     <ClInclude Include="VideoBackends\Software\SetupUnit.h" />
     <ClInclude Include="VideoBackends\Software\SWBoundingBox.h" />
+    <ClInclude Include="VideoBackends\Software\SWEfbInterface.h" />
     <ClInclude Include="VideoBackends\Software\SWGfx.h" />
     <ClInclude Include="VideoBackends\Software\SWOGLWindow.h" />
-    <ClInclude Include="VideoBackends\Software\SWRenderer.h" />
     <ClInclude Include="VideoBackends\Software\SWTexture.h" />
     <ClInclude Include="VideoBackends\Software\SWVertexLoader.h" />
     <ClInclude Include="VideoBackends\Software\Tev.h" />
@@ -678,6 +679,7 @@
     <ClInclude Include="VideoCommon\CPUCullImpl.h" />
     <ClInclude Include="VideoCommon\DataReader.h" />
     <ClInclude Include="VideoCommon\DriverDetails.h" />
+    <ClInclude Include="VideoCommon\EFBInterface.h" />
     <ClInclude Include="VideoCommon\Fifo.h" />
     <ClInclude Include="VideoCommon\FramebufferManager.h" />
     <ClInclude Include="VideoCommon\FramebufferShaderGen.h" />
@@ -727,7 +729,6 @@
     <ClInclude Include="VideoCommon\PixelShaderManager.h" />
     <ClInclude Include="VideoCommon\PostProcessing.h" />
     <ClInclude Include="VideoCommon\Present.h" />
-    <ClInclude Include="VideoCommon\RenderBase.h" />
     <ClInclude Include="VideoCommon\RenderState.h" />
     <ClInclude Include="VideoCommon\ShaderCache.h" />
     <ClInclude Include="VideoCommon\ShaderGenCommon.h" />
@@ -768,7 +769,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AudioCommon\AudioCommon.cpp" />
-    <ClCompile Include="AudioCommon\AudioStretcher.cpp" />
     <ClCompile Include="AudioCommon\CubebStream.cpp" />
     <ClCompile Include="AudioCommon\CubebUtils.cpp" />
     <ClCompile Include="AudioCommon\Mixer.cpp" />
@@ -809,6 +809,7 @@
     <ClCompile Include="Common\GL\GLInterface\WGL.cpp" />
     <ClCompile Include="Common\GL\GLUtil.cpp" />
     <ClCompile Include="Common\Hash.cpp" />
+    <ClCompile Include="Common\HostDisassembler.cpp" />
     <ClCompile Include="Common\HRWrap.cpp" />
     <ClCompile Include="Common\HttpRequest.cpp" />
     <ClCompile Include="Common\Image.cpp" />
@@ -1089,6 +1090,7 @@
     <ClCompile Include="Core\NetworkCaptureLogger.cpp" />
     <ClCompile Include="Core\PatchEngine.cpp" />
     <ClCompile Include="Core\PowerPC\BreakPoints.cpp" />
+    <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter_Disassembler.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreter.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreterBlockCache.cpp" />
     <ClCompile Include="Core\PowerPC\CachedInterpreter\CachedInterpreterEmitter.cpp" />
@@ -1122,6 +1124,7 @@
     <ClCompile Include="Core\State.cpp" />
     <ClCompile Include="Core\SysConf.cpp" />
     <ClCompile Include="Core\System.cpp" />
+    <ClCompile Include="Core\TimePlayed.cpp" />
     <ClCompile Include="Core\TitleDatabase.cpp" />
     <ClCompile Include="Core\WiiRoot.cpp" />
     <ClCompile Include="Core\WiiUtils.cpp" />
@@ -1206,7 +1209,6 @@
     <ClCompile Include="InputCommon\InputProfile.cpp" />
     <ClCompile Include="UICommon\AutoUpdate.cpp" />
     <ClCompile Include="UICommon\CommandLineParse.cpp" />
-    <ClCompile Include="UICommon\Disassembler.cpp" />
     <ClCompile Include="UICommon\DiscordPresence.cpp" />
     <ClCompile Include="UICommon\GameFile.cpp" />
     <ClCompile Include="UICommon\GameFileCache.cpp" />
@@ -1265,14 +1267,13 @@
     <ClCompile Include="VideoBackends\OGL\SamplerCache.cpp" />
     <ClCompile Include="VideoBackends\Software\Clipper.cpp" />
     <ClCompile Include="VideoBackends\Software\EfbCopy.cpp" />
-    <ClCompile Include="VideoBackends\Software\EfbInterface.cpp" />
     <ClCompile Include="VideoBackends\Software\Rasterizer.cpp" />
     <ClCompile Include="VideoBackends\Software\SetupUnit.cpp" />
     <ClCompile Include="VideoBackends\Software\SWmain.cpp" />
     <ClCompile Include="VideoBackends\Software\SWBoundingBox.cpp" />
+    <ClCompile Include="VideoBackends\Software\SWEfbInterface.cpp" />
     <ClCompile Include="VideoBackends\Software\SWGfx.cpp" />
     <ClCompile Include="VideoBackends\Software\SWOGLWindow.cpp" />
-    <ClCompile Include="VideoBackends\Software\SWRenderer.cpp" />
     <ClCompile Include="VideoBackends\Software\SWTexture.cpp" />
     <ClCompile Include="VideoBackends\Software\SWVertexLoader.cpp" />
     <ClCompile Include="VideoBackends\Software\Tev.cpp" />
@@ -1320,6 +1321,7 @@
     <ClCompile Include="VideoCommon\CPMemory.cpp" />
     <ClCompile Include="VideoCommon\CPUCull.cpp" />
     <ClCompile Include="VideoCommon\DriverDetails.cpp" />
+    <ClCompile Include="VideoCommon\EFBInterface.cpp" />
     <ClCompile Include="VideoCommon\Fifo.cpp" />
     <ClCompile Include="VideoCommon\FramebufferManager.cpp" />
     <ClCompile Include="VideoCommon\FramebufferShaderGen.cpp" />
@@ -1360,7 +1362,6 @@
     <ClCompile Include="VideoCommon\PixelShaderManager.cpp" />
     <ClCompile Include="VideoCommon\PostProcessing.cpp" />
     <ClCompile Include="VideoCommon\Present.cpp" />
-    <ClCompile Include="VideoCommon\RenderBase.cpp" />
     <ClCompile Include="VideoCommon\RenderState.cpp" />
     <ClCompile Include="VideoCommon\ShaderCache.cpp" />
     <ClCompile Include="VideoCommon\ShaderGenCommon.cpp" />

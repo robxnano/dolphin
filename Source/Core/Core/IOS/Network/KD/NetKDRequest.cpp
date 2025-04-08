@@ -16,6 +16,7 @@
 #include "Common/FileUtil.h"
 #include "Common/Logging/Log.h"
 #include "Common/NandPaths.h"
+#include "Common/Projection.h"
 #include "Common/SettingsHandler.h"
 #include "Common/StringUtil.h"
 
@@ -62,8 +63,7 @@ u8 GetAreaCode(std::string_view area)
       {"CHN", 6},
   }};
 
-  const auto entry_pos = std::find_if(regions.cbegin(), regions.cend(),
-                                      [&area](const auto& entry) { return entry.first == area; });
+  const auto entry_pos = std::ranges::find(regions, area, Common::Projection::Key{});
   if (entry_pos != regions.end())
     return entry_pos->second;
 
@@ -79,8 +79,7 @@ HardwareModel GetHardwareModel(std::string_view model)
       {"RVD", HardwareModel::RVD},
   }};
 
-  const auto entry_pos = std::find_if(models.cbegin(), models.cend(),
-                                      [&model](const auto& entry) { return entry.first == model; });
+  const auto entry_pos = std::ranges::find(models, model, Common::Projection::Key{});
   if (entry_pos != models.cend())
     return entry_pos->second;
 
@@ -923,7 +922,7 @@ IPCReply NetKDRequestDevice::HandleRequestRegisterUserId(const IOS::HLE::IOCtlRe
     return IPCReply{IPC_SUCCESS};
   }
 
-  Common::SettingsHandler::Buffer data;
+  Common::SettingsBuffer data;
   if (!file->Read(data.data(), data.size()))
   {
     WriteReturnValue(memory, NWC24::WC24_ERR_FILE_READ, request.buffer_out);
@@ -931,8 +930,8 @@ IPCReply NetKDRequestDevice::HandleRequestRegisterUserId(const IOS::HLE::IOCtlRe
     return IPCReply{IPC_SUCCESS};
   }
 
-  const Common::SettingsHandler gen{data};
-  const std::string serno = gen.GetValue("SERNO");
+  const Common::SettingsReader settings_reader{data};
+  const std::string serno = settings_reader.GetValue("SERNO");
   const std::string form_data =
       fmt::format("mlid=w{}&hdid={}&rgncd={}", m_config.Id(), m_ios.GetIOSC().GetDeviceId(), serno);
   const Common::HttpRequest::Response response = m_http.Post(m_config.GetAccountURL(), form_data);
@@ -1076,12 +1075,12 @@ std::optional<IPCReply> NetKDRequestDevice::IOCtl(const IOCtlRequest& request)
       const auto fs = m_ios.GetFS();
       if (const auto file = fs->OpenFile(PID_KD, PID_KD, settings_file_path, FS::Mode::Read))
       {
-        Common::SettingsHandler::Buffer data;
+        Common::SettingsBuffer data;
         if (file->Read(data.data(), data.size()))
         {
-          const Common::SettingsHandler gen{data};
-          area = gen.GetValue("AREA");
-          model = gen.GetValue("MODEL");
+          const Common::SettingsReader settings_reader{data};
+          area = settings_reader.GetValue("AREA");
+          model = settings_reader.GetValue("MODEL");
         }
       }
 
